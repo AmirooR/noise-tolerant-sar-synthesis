@@ -1,0 +1,151 @@
+model:
+  base_learning_rate: 1.0e-04
+  target: ldm.models.diffusion.ddpm.LatentDiffusion
+  params:
+    linear_start: 0.00085
+    linear_end: 0.0120
+    num_timesteps_cond: 1
+    log_every_t: 200
+    timesteps: 1000
+    first_stage_key: "image_target"
+    cond_stage_key: "image_cond"
+    image_size: 32
+    channels: 4
+    cond_stage_trainable: false   # Note: different from the one we trained before
+    conditioning_key: hybrid
+    monitor: val/loss_simple_ema
+    scale_factor: 0.18215
+
+    scheduler_config: # 10000 warmup steps
+      target: ldm.lr_scheduler.LambdaLinearScheduler
+      params:
+        warm_up_steps: [ 100 ]
+        cycle_lengths: [ 10000000000000 ] # incredibly large number to prevent corner cases
+        f_start: [ 1.e-6 ]
+        f_max: [ 1. ]
+        f_min: [ 1. ]
+
+    unet_config:
+      target: ldm.modules.diffusionmodules.openaimodel.UNetModel
+      params:
+        image_size: 32 # unused
+        in_channels: 8
+        out_channels: 4
+        model_channels: 320
+        attention_resolutions: [ 4, 2, 1 ]
+        num_res_blocks: 2
+        channel_mult: [ 1, 2, 4, 4 ]
+        num_heads: 8
+        use_spatial_transformer: True
+        transformer_depth: 1
+        context_dim: 768
+        use_checkpoint: True
+        legacy: False
+
+    first_stage_config:
+      target: ldm.models.autoencoder.AutoencoderKL
+      params:
+        embed_dim: 4
+        monitor: val/rec_loss
+        ddconfig:
+          double_z: true
+          z_channels: 4
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+          - 1
+          - 2
+          - 4
+          - 4
+          num_res_blocks: 2
+          attn_resolutions: []
+          dropout: 0.0
+        lossconfig:
+          target: torch.nn.Identity
+
+    cond_stage_config:
+      target: ldm.modules.encoders.modules.FrozenCLIPImageEmbedder
+
+    has_representation_loss: true
+    representation_loss_weight: 1.0
+    representation_loss_image_size: 128
+    representation_loss_config:
+      model_path: '/home/amirr/codes/cds/lightning_logs/classifier/mstar2_ood_t72/noisespeckle_rayleigh/eps10.0/monotonicTrue_e500/Q4096/P0.95/gamma0.0/version_0/checkpoints/epoch=499-step=9500.ckpt'
+      loss_type: 'l2'
+      model_config:
+        target: ldm.models.cds.model.Classifier
+        params:
+          num_classes: 9
+          divisor: 1.
+          is_complex: false
+          fix_backbone: true
+          is_regression: false
+
+    apply_decibel: false
+    decibel_scale: 16.771
+    decibel_offset: 0.001
+
+data:
+  target: ldm.data.simple.ShipDataModuleFromConfig
+  params:
+    root_dir: 'data/SAMPLE_dataset_public'
+    db_file: 'mstar2_ood_t72_cls_neis.pkl'
+    lap_cutmix: 1.0
+    batch_size: 10 #10 #96 #192
+    num_workers: 8
+    train:
+      validation: False
+      image_transforms:
+        size: 256
+        #augmentation:
+        #target: ldm.data.simple.ShipAugmentor
+        #params: #TODO
+        #epsilon: 10.0
+        #noise_type: 'speckle_rayleigh'
+        #random_monotonic: true
+        #Q: 4096
+        ##p: 0.95
+        #p: 0.15
+        #is_decibel: true
+        #global_min: -60.0
+        #global_max: 24.491226196289062
+        #mono_e_min: 1.0
+        #mono_e_max: 1.0
+            
+
+    validation:
+      validation: True
+      image_transforms:
+        size: 256
+
+
+lightning:
+  find_unused_parameters: false
+  metrics_over_trainsteps_checkpoint: True
+  modelcheckpoint:
+    params:
+      every_n_train_steps: 500 #100 #500 #5000
+  callbacks:
+    image_logger:
+      target: main.ImageLogger
+      params:
+        batch_frequency: 500 #100 #500
+        max_images: 8 #16 #32
+        increase_log_steps: False
+        log_first_step: True
+        log_images_kwargs:
+          use_ema_scope: False
+          inpaint: False
+          plot_progressive_rows: False
+          plot_diffusion_rows: False
+          N: 8 #16 #32
+          unconditional_guidance_scale: 6.0 #3.0
+          unconditional_guidance_label: [""]
+
+  trainer:
+    benchmark: True
+    val_check_interval: 5000000 # really sorry
+    num_sanity_val_steps: 0
+    accumulate_grad_batches: 4
